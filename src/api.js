@@ -1,414 +1,201 @@
-const cheerio = require('cheerio');
-const cloudscraper = require('cloudscraper');
-const {BASE_URL, MOVIES, SERIES, GENRES, BASE_URL_EXTENSION} = require('./util/urls')
+const express = require('express');
+const cors = require('cors');
+const { search, getMovieDetails, getMoviesBySection, getDirectVideoInfo } = require('./scraper');
+const cloudscraper = require('cloudscraper'); // Added for proxy endpoint
+const { URL } = require('url');
 
-const getMovies = async(type, page = '') =>{
-  const query = type === 0 ? `/page/${page}` : `/page/${page}`;
-  const res = await cloudscraper(`${BASE_URL}${MOVIES[type]}${query}` , {method: 'GET'});
-  const body = await res;
-  const $ = cheerio.load(body);
-  const promises = [];
-  const url = '#aa-wp > div > div > main > section';
-  $(`${url} > ul > li`).each((index , element) =>{
-    const $element = $(element);
-    const id = $element.find('div.TPost.C > a').attr('href').split(BASE_URL_EXTENSION)[1];
-    const title = $element.find('div.TPost.C > a > h2').text();
-    const poster = $element.find('div.TPost.C > a > div > figure > img').attr('data-src');
-    const year = $element.find('div.TPost.C > a > div > span.Year').text();
-    const sypnosis = $element.find('div.TPMvCn > div.Description > p:nth-child(2)').text();
-    const rating = $element.find('div.TPMvCn > p.Info > span.Vote').text();
-    const duration = $element.find('div.TPMvCn > p.Info > span.Time').text();
-    const director = $element.find('div.TPMvCn > div.Description > p.Director').text().replace('Director: ','').split(', ');
-    const genres = $element.find('div.TPMvCn > div.Description > p.Genre').text().replace('Género: ','').split(', ');
-    const cast = $element.find('div.TPMvCn > div.Description > p.Actors').text().replace('Actores: ','').split(', ');
-    
-    promises.push({
-      id: id || null,
-      title: title || null,
-      poster: poster || null,
-      year: year || null,
-      sypnosis: sypnosis || null,
-      rating: rating || null,
-      duration: duration || null,
-      director: director || null,
-      genres: genres || null,
-      cast: cast || null
-    })
-  })
-  return await Promise.all(promises);
-};
+const app = express();
+const PORT = process.env.PORT || 3001;
 
-const getSeries = async(type) =>{
-  const res = await cloudscraper(`${BASE_URL}serie`, {method: 'GET'});
-  const body = await res;
-  const $ = cheerio.load(body);
-  const promises = [];
+// In-memory store for active SSE clients
+const clients = {};
 
-  $(`${SERIES[type]} > ul > li`).each((index , element) =>{
-    if (type < 4){
-      const $element = $(element);
-      const id = $element.find('div.TPost.C > a').attr('href').split(BASE_URL_EXTENSION)[1];
-      const title = $element.find('div.TPost.C > a > h2').text();
-      const poster = $element.find('div.TPost.C > a > div > figure > img').attr('data-src');
-      const year = $element.find('div.TPost.C > a > div > span.Year').text();
-      const sypnosis = $element.find('div.TPMvCn > div.Description > p:nth-child(2)').text();
-      const rating = $element.find('div.TPMvCn > p.Info > span.Vote').text();
-      const duration = $element.find('div.TPMvCn > p.Info > span.Time').text();
-      const director = $element.find('div.TPMvCn > div.Description > p.Director').text().replace('Director: ','').split(', ');
-      const genres = $element.find('div.TPMvCn > div.Description > p.Genre').text().replace('Género: ','').split(', ');
-      const cast = $element.find('div.TPMvCn > div.Description > p.Actors').text().replace('Actores: ','').split(', ');
-      
-      promises.push({
-        id: id || null,
-        title: title || null,
-        poster: poster || null,
-        year: year || null,
-        sypnosis: sypnosis || null,
-        rating: rating || null,
-        duration: duration || null,
-        director: director || null,
-        genres: genres || null,
-        cast: cast || null
-      });
-    }else{
-      const $element = $(element);
-      const id = $element.find('article.TPost.C > a').attr('href').split('.io/')[1];
-      const episode = $element.find('article.TPost.C > a > h2.Title').text();
-      const poster = 'https://'+$element.find('article.TPost.C > a > div.Image > figure > img').attr('data-src').split('//')[1];
-      
-      promises.push({
-        id: id || null,
-        episode: episode || null,
-        poster: poster || null
-      });
+// Function to send log messages to a specific client
+const sendLog = (requestId, message) => {
+    if (clients[requestId]) {
+        clients[requestId].res.write(`data: ${JSON.stringify({ message })}\\n\\n`);
     }
-  })
-  return await Promise.all(promises);
 };
 
-const getDetail = async(id) => {
-  const res = await cloudscraper(`${BASE_URL}${id}` , {method: 'GET'});
-  const body = await res;
-  const $ = cheerio.load(body);
-  const promises = [];
+app.use(cors());
+app.use(express.json());
 
-  const poster = $('#top-single > div.backdrop > article > div.Image > figure > img').attr('data-src').replace('w185_and_h278','w600_and_h900');
-  const background = $('#top-single > div.backdrop > div > figure > img').attr('data-src');
-  const title = $('#top-single > div.backdrop > article > header > h1').text();
-  const original_title = $('#top-single > div.backdrop > article > header > h2').text();
-  const sypnosis= $('#top-single > div.backdrop > article > div.Description > p').text();
-  const year = $('#top-single > div.backdrop > article > footer > p > span:nth-child(2)').text();
-  const duration = $('#top-single > div.backdrop > article > footer > p > span:nth-child(1)').text();
-  const rating = $('div.post-ratings > strong:nth-child(7)').text();
-  const director = $('#MvTb-Info > ul > li:nth-child(1) > span').text().split(', ');
-  const genres = [];
-  $(`#MvTb-Info > ul > li:nth-child(2) > a`).each((index , element) =>{
-    const $element = $(element);
-    const id = $element.attr('href').split('/')[4];
-    const genre = $element.text();
+function withTimeout(promise, ms) {
+    const timeout = new Promise((_, reject) => {
+        setTimeout(() => {
+            reject(new Error(`Timeout after ${ms}ms`));
+        }, ms);
+    });
+    return Promise.race([promise, timeout]);
+}
 
-    genres.push({
-      id: id || null,
-      genre: genre || null,
-    })
-  })
-  const cast = [];
-  $(`#MvTb-Info > ul > li.AAIco-adjust.loadactor > a`).each((index , element) =>{
-    const $element = $(element);
-    const id = $element.attr('href').split('/')[4];
-    const name = $element.text().replace(',','');
+// Logs route for Server-Sent Events
+app.get('/logs/:requestId', (req, res) => {
+    const { requestId } = req.params;
+    res.setHeader('Content-Type', 'text/event-stream');
+    res.setHeader('Cache-Control', 'no-cache');
+    res.setHeader('Connection', 'keep-alive');
+    res.flushHeaders();
 
-    cast.push({
-      id: id || null,
-      name: name || null,
-    })
-  })
- 
-  if (id.includes('serie')){
-    const episodes = [];
-    for(let i = 1; i < 30; i++){
-      const season = [];
-      $(`#season-${i} > li`).each((index , element) =>{
-        const $element = $(element);
-        const id = $element.find('article a').attr('href').split('.io/')[1];
-        const episode = $element.find('article a div.Image span.Year').text().split('x')[1];
-        const preview = $element.find('article a div.Image figure img').attr('data-src').replace('w185','w500');
-        const release = $element.find('article a p').text();
+    clients[requestId] = { res };
+    
+    sendLog(requestId, 'Log stream started. Waiting for scraper...');
+
+    req.on('close', () => {
+        delete clients[requestId];
+    });
+});
+
+
+// New route for all browsable sections
+app.get('/section/:section/:subsection?', async (req, res) => {
+    const { section, subsection } = req.params;
+    const page = req.query.page || 1;
+
+    let scrapePath = subsection ? `${section}/${subsection}` : section;
+
+    // Prepend 'peliculas' for a 'tendencias' section, as per the site structure
+    if (section === 'tendencias') {
+        scrapePath = `peliculas/${scrapePath}`;
+    }
+
+    // The allowed sections check remains on the original path from the client
+    const clientPath = subsection ? `${section}/${subsection}` : section;
+    const allowedSections = ['peliculas', 'estrenos', 'tendencias/dia', 'tendencias/semana'];
+    if (!allowedSections.includes(clientPath)) {
+        return res.status(404).json({ error: 'Section not found.' });
+    }
+
+    try {
+        const results = await getMoviesBySection(scrapePath, page);
+        res.json(results);
+    } catch (error) {
+        res.status(500).json({ error: 'Failed to get movies for the requested section.' });
+    }
+});
+
+// Search route
+app.get('/search', async (req, res) => {
+    const { q } = req.query;
+    if (!q) {
+        return res.status(400).json({ error: 'Search query "q" is required.' });
+    }
+
+    try {
+        const results = await search(q);
+        res.json(results);
+    } catch (error) {
+        console.error('Search failed:', error);
+        res.status(500).json({ error: 'Failed to perform search.' });
+    }
+});
+
+// Movie details and video source route
+app.get('/movie', async (req, res) => {
+    const { url, requestId } = req.query;
+    if (!url) {
+        return res.status(400).json({ error: 'Movie URL "url" is required.' });
+    }
+    if (!requestId) {
+        return res.status(400).json({ error: 'Request ID "requestId" is required.' });
+    }
+
+    const logger = (message) => sendLog(requestId, message);
+
+    try {
+        const details = await getMovieDetails(url);
+        if (!details) {
+            return res.status(404).json({ error: 'Movie details not found.' });
+        }
+
+        const latinoOptions = details.languageOptions?.latino || [];
         
-        season.push({
-          id: id || null,
-          episode: episode || null,
-          preview: preview.includes('https:') ? preview : 'https:' + preview || null,
-          release: release || null
-        })
-      })
-      if(season.length === 0) { break }
-      episodes.push({
-        season: i,
-        episodes: season,
-      });
-    }
+        // Use ONLY streamwish options, as requested.
+        const streamwishOptions = latinoOptions.filter(opt => opt.server === 'streamwish');
 
-    promises.push({
-      id: id,
-      poster: poster || null,
-      background: background || null,
-      title: title || null,
-      original_title: original_title || null,
-      sypnosis: sypnosis || null,
-      year: year || null,
-      duration: duration || null,
-      rating: rating || null,
-      director: director || null,
-      genres: genres || null,
-      cast: cast || null,
-      episodes: episodes
-    })
-  } else {
-    const latino = [];
-    for(let i = 1; i < 11; i++){
-      const url = $(`#OptL${i} > iframe`).attr('data-src');
-      if(url === undefined) {break}
-      latino.push({
-        url: 'https:' + url,
-      })
-    }
-    const espanol = [];
-    for(let i = 1; i < 11; i++){
-      const url = $(`#OptE${i} > iframe`).attr('data-src');
-      if(url === undefined) {break}
-      espanol.push({
-        url: 'https:' + url,
-      })
-    }
-    const sub = [];
-    for(let i = 1; i < 11; i++){
-      const url = $(`#OptS${i} > iframe`).attr('data-src');
-      if(url === undefined) {break}
-      sub.push({
-        url: 'https:' + url,
-      })
-    }
+        if (streamwishOptions.length > 0) {
+            for (const option of streamwishOptions) {
+                try {
+                    const fetchVideoPromise = () => getDirectVideoInfo(option.url, logger);
 
-    promises.push({
-      id: id,
-      poster: poster || null,
-      background: background || null,
-      title: title || null,
-      original_title: original_title || null,
-      sypnosis: sypnosis || null,
-      year: year || null,
-      duration: duration || null,
-      rating: rating || null,
-      director: director || null,
-      genres: genres || null,
-      cast: cast || null,
-      links:{
-        latino: latino,
-        espanol: espanol,
-        sub: sub,
+                    const result = await withTimeout(fetchVideoPromise(), 45000); // 45-second timeout for the whole process
+
+                    if (result && result.directVideoUrl) {
+                        logger('Video found! Sending details to player.');
+                        details.directVideoUrl = result.directVideoUrl;
+                        details.referer = result.referer;
+                        res.json(details);
+                        if(clients[requestId]) clients[requestId].res.end(); // Close SSE connection
+                        return;
+                    }
+                } catch (error) {
+                    // The scraper now sends its own, more user-friendly error messages.
+                    // No need to log a generic one here.
+                }
+            }
+        }
+
+        // If no direct link is found after trying all options
+        logger('Could not find a working video source.');
+        res.status(404).json({ error: 'Could not find a direct video source for this movie.', details });
+
+    } catch (error) {
+        logger(`A critical error occurred: ${error.message}`);
+        res.status(500).json({ error: 'Failed to get movie details.' });
+    } finally {
+         if(clients[requestId]) clients[requestId].res.end(); // Ensure connection is closed
+    }
+});
+
+app.get('/proxy', async (req, res) => {
+  const { url, referer } = req.query;
+
+  if (!url) {
+    return res.status(400).json({ error: 'URL is required' });
+  }
+
+  try {
+    const requestOptions = {
+      uri: url,
+      resolveWithFullResponse: true,
+      encoding: null,
+      headers: {
+        'Referer': referer || '',
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
       }
-    })
-  }
-
-  return await Promise.all(promises);
-}
-
-const getByGenre = async(type, page) => {
-  const res = await cloudscraper(`${BASE_URL}category/${GENRES[type]}/page/${page}` , {method: 'GET'});
-  const body = await res;
-  const $ = cheerio.load(body);
-  const promises = [];
-
-  $(`#aa-wp > div > div.TpRwCont.cont > main > section > ul > li`).each((index , element) =>{
-    const $element = $(element);
-    const id = $element.find('div.TPost.C > a').attr('href').split(BASE_URL_EXTENSION)[1];
-    const title = $element.find('div.TPost.C > a > h2').text();
-    const poster = $element.find('div.TPost.C > a > div > figure > img').attr('data-src');
-    const year = $element.find('div.TPost.C > a > div > span.Year').text();
-    const sypnosis = $element.find('div.TPMvCn > div.Description > p:nth-child(2)').text();
-    const rating = $element.find('div.TPMvCn > p.Info > span.Vote').text();
-    const duration = $element.find('div.TPMvCn > p.Info > span.Time').text();
-    const director = $element.find('div.TPMvCn > div.Description > p.Director').text().replace('Director: ','').split(', ');
-    const genres = $element.find('div.TPMvCn > div.Description > p.Genre').text().replace('Género: ','').split(', ');
-    const cast = $element.find('div.TPMvCn > div.Description > p.Actors').text().replace('Actores: ','').split(', ');
+    };
     
-    promises.push({
-      id: id || null,
-      title: title || null,
-      poster: poster || null,
-      year: year || null,
-      sypnosis: sypnosis || null,
-      rating: rating || null,
-      duration: duration || null,
-      director: director || null,
-      genres: genres || null,
-      cast: cast || null
-    })
-  })
-  return await Promise.all(promises);
-}
+    const response = await cloudscraper.get(requestOptions);
+    const contentType = response.headers['content-type'] || '';
 
-const getByActor = async(id, page) => {
-  const res = await cloudscraper(`${BASE_URL}actor/${id}/page/${page}` , {method: 'GET'});
-  const body = await res;
-  const $ = cheerio.load(body);
-  const promises = [];
+    if (contentType.includes('mpegurl')) { // It's an M3U8 playlist
+      const playlist = response.body.toString('utf8');
+      const baseUrl = url;
+      const proxyReferer = encodeURIComponent(referer || '');
 
-  $(`#aa-wp > div > div.TpRwCont.cont > main > section > ul > li`).each((index , element) =>{
-    const $element = $(element);
-    const id = $element.find('div.TPost.C > a').attr('href').split(BASE_URL_EXTENSION)[1];
-    const title = $element.find('div.TPost.C > a > h2').text();
-    const poster = $element.find('div.TPost.C > a > div > figure > img').attr('data-src');
-    const year = $element.find('div.TPost.C > a > div > span.Year').text();
-    const sypnosis = $element.find('div.TPMvCn > div.Description > p:nth-child(2)').text();
-    const rating = $element.find('div.TPMvCn > p.Info > span.Vote').text();
-    const duration = $element.find('div.TPMvCn > p.Info > span.Time').text();
-    const director = $element.find('div.TPMvCn > div.Description > p.Director').text().replace('Director: ','').split(', ');
-    const genres = $element.find('div.TPMvCn > div.Description > p.Genre').text().replace('Género: ','').split(', ');
-    const cast = $element.find('div.TPMvCn > div.Description > p.Actors').text().replace('Actores: ','').split(', ');
-    
-    promises.push({
-      id: id || null,
-      title: title || null,
-      poster: poster || null,
-      year: year || null,
-      sypnosis: sypnosis || null,
-      rating: rating || null,
-      duration: duration || null,
-      director: director || null,
-      genres: genres || null,
-      cast: cast || null
-    })
-  })
-  return await Promise.all(promises);
-}
+      const rewrittenPlaylist = playlist.split('\n').map(line => {
+        line = line.trim();
+        if (line && !line.startsWith('#')) {
+          const absoluteUrl = new URL(line, baseUrl).href;
+          return `http://localhost:3001/proxy?url=${encodeURIComponent(absoluteUrl)}&referer=${proxyReferer}`;
+        }
+        return line;
+      }).join('\n');
 
-const getSearch = async(query, page) => {
-  const res = await cloudscraper(`${BASE_URL}page/${page}?s=${query.replace(/ /g,'+')}` , {method: 'GET'});
-  const body = await res;
-  const $ = cheerio.load(body);
-  const promises = [];
+      res.setHeader('Content-Type', contentType);
+      res.send(rewrittenPlaylist);
 
-  $(`#aa-wp > div > div > main > section > ul > li`).each((index , element) =>{
-    const $element = $(element);
-    const id = $element.find('div.TPost.C > a').attr('href').split(BASE_URL_EXTENSION)[1];
-    const title = $element.find('div.TPost.C > a > h2').text();
-    const poster = $element.find('div.TPost.C > a > div > figure > img').attr('data-src');
-    const year = $element.find('div.TPost.C > a > div > span.Year').text();
-    const sypnosis = $element.find('div.TPMvCn > div.Description > p:nth-child(2)').text();
-    const rating = $element.find('div.TPMvCn > p.Info > span.Vote').text();
-    const duration = $element.find('div.TPMvCn > p.Info > span.Time').text();
-    const director = $element.find('div.TPMvCn > div.Description > p.Director').text().replace('Director: ','').split(', ');
-    const genres = $element.find('div.TPMvCn > div.Description > p.Genre').text().replace('Género: ','').split(', ');
-    const cast = $element.find('div.TPMvCn > div.Description > p.Actors').text().replace('Actores: ','').split(', ');
-    
-    promises.push({
-      id: id || null,
-      title: title || null,
-      poster: poster || null,
-      year: year || null,
-      sypnosis: sypnosis || null,
-      rating: rating || null,
-      duration: duration || null,
-      director: director || null,
-      genres: genres || null,
-      cast: cast || null
-    })
-  })
-  return await Promise.all(promises);
-}
-
-const getLinks = async(id) => {
-  const res = await cloudscraper(`${BASE_URL}${id}` , {method: 'GET'});
-  const body = await res;
-  const $ = cheerio.load(body);
-  const promises = [];
-
-  const latino = [];
-  for(let i = 1; i < 11; i++){
-    const url = $(`#OptL${i} > iframe`).attr('data-src');
-    if(url !== undefined) {
-      latino.push({
-        url: 'https:' + url,
-      })
+    } else { // Not a playlist, just proxy directly
+      res.setHeader('Content-Type', contentType);
+      res.send(response.body);
     }
+  } catch (error) {
+    console.error('Proxy error:', error);
+    res.status(500).json({ error: 'Failed to proxy request.' });
   }
-  const espanol = [];
-  for(let i = 1; i < 11; i++){
-    const url = $(`#OptE${i} > iframe`).attr('data-src');
-    if(url !== undefined) {
-      espanol.push({
-        url: 'https:' + url,
-      })
-    }
-  }
-  const sub = [];
-  for(let i = 1; i < 11; i++){
-    const url = $(`#OptS${i} > iframe`).attr('data-src');
-    if(url !== undefined) {
-      sub.push({
-        url: 'https:' + url,
-      })
-    }
-  }
+});
 
-  promises.push({
-    latino: latino,
-    espanol: espanol,
-    sub: sub,
-  });
 
-  return await Promise.all(promises);
-}
-
-const getDownload = async(id) => {
-  const res = await cloudscraper(`${BASE_URL}${id}` , {method: 'GET'});
-  const body = await res;
-  const $ = cheerio.load(body);
-  const promises = [];
-
-  $(`#mdl-downloads > div.mdl-cn > div.mdl-bd > div > table > tbody > tr`).each((index , element) =>{
-    const $element = $(element);
-    const server = $element.find('td:nth-child(1)').text().split(' ')[1];
-    const language = $element.find('td:nth-child(2)').text();
-    const quality = $element.find('td:nth-child(3)').text();
-    const link = $element.find('td:nth-child(4) a').attr('href');
-    
-    promises.push({
-      server: server || null,
-      language: language || null,
-      quality: quality || null,
-      link: link.includes('https:') ? link : 'https:' + link
-    })
-  })
-
-  return await Promise.all(promises);
-}
-
-const getTrailer = async(id) => {
-  const res = await cloudscraper(`${BASE_URL}${id}` , {method: 'GET'});
-  const body = await res;
-  const $ = cheerio.load(body);
-  const promises = [];
-
-  const url = $(`#OptY > iframe`).attr('data-src');
-
-  promises.push({
-    url: url || null,
-  });
-
-  return await Promise.all(promises);
-}
-
-module.exports = {
-  getMovies,
-  getSeries,
-  getDetail,
-  getByGenre,
-  getByActor,
-  getSearch,
-  getLinks,
-  getDownload,
-  getTrailer
-};
+app.listen(PORT, () => {
+    console.log(`Server is running on http://localhost:${PORT}`);
+});

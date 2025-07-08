@@ -1,39 +1,36 @@
 {
-  "name": "cuevana3",
-  "version": "1.0.4",
-  "description": "Cuevana3 scraper is a content provider of the latest in the world of cinema with sub in Latin Spanish, subtitled and free, in addition to providing different complementary information.",
-  "main": "./src/api.js",
-  "types": "./types/api.d.ts",
+  "name": "cuevana-scraper-api",
+  "version": "1.0.0",
+  "description": "A backend API to scrape movie data from Cuevana.",
+  "main": "src/api.js",
   "scripts": {
+    "start": "node src/api.js",
     "dev": "nodemon src/api.js"
   },
   "keywords": [
-    "cuevana3-scraper",
     "cuevana",
-    "cuevana3",
     "scraper",
-    "cuevana 3"
+    "api"
   ],
-  "author": "Carlos Fernández <carlosfdezb@gmail.com>",
-  "contributors": [
-    "Carlos Fernández (https://github.com/carlosfdezb)"
-  ],
-  "license": "MIT",
+  "author": "",
+  "license": "ISC",
   "dependencies": {
-    "cheerio": "^1.0.0-rc.6",
+    "axios": "^1.6.0",
+    "cheerio": "^1.0.0-rc.12",
     "cloudscraper": "^4.6.0",
-    "nodemon": "^2.0.6",
-    "request": "^2.88.2"
+    "cors": "^2.8.5",
+    "express": "^4.18.2",
+    "puppeteer": "^21.5.2"
   },
   "devDependencies": {
-    "typescript": "^2.9.2"
-  },
-  "repository": {
-    "type": "git",
-    "url": "git+https://github.com/carlosfdezb/cuevana3.git"
-  },
-  "bugs": {
-    "url": "https://github.com/carlosfdezb/cuevana3/issues"
-  },
-  "homepage": "https://github.com/carlosfdezb/cuevana3#readme"
+    "nodemon": "^3.0.1",
+    "@typescript-eslint/eslint-plugin": "^6.9.0",
+    "@typescript-eslint/parser": "^6.9.0",
+    "eslint": "^8.52.0",
+    "eslint-config-standard-with-typescript": "^39.1.1",
+    "eslint-plugin-import": "^2.29.0",
+    "eslint-plugin-n": "^16.2.0",
+    "eslint-plugin-promise": "^6.1.1",
+    "typescript": "^5.2.2"
+  }
 }
